@@ -1,0 +1,58 @@
+/* manager.css */
+
+/* Manager Dashboard */
+.manager-dashboard {
+    background-color: var(--surface-color);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.manager-dashboard h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+/* Approve/Reject Buttons */
+.manager-btn-approve,
+.manager-btn-reject {
+    padding: 0.75rem 1.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.manager-btn-approve {
+    background-color: var(--success-color);
+}
+
+.manager-btn-reject {
+    background-color: var(--error-color);
+}
+
+.manager-btn-approve:hover {
+    background-color: #40c6ff;
+}
+
+.manager-btn-reject:hover {
+    background-color: #f3166e;
+}
+
+/* Manager Submission List */
+.manager-submission-list {
+    margin-top: 2rem;
+}
+
+.manager-submission-list ul {
+    list-style: none;
+}
+
+.manager-submission-list li {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}

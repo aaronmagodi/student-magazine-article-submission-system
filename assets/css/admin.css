@@ -1,0 +1,41 @@
+/* admin.css */
+
+/* Admin Dashboard */
+.admin-dashboard {
+    background-color: var(--surface-color);
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.admin-dashboard h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+/* Admin Management Buttons */
+.admin-btn-manage {
+    padding: 1rem 2rem;
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.admin-btn-manage:hover {
+    background-color: var(--secondary-color);
+}
+
+/* Admin Tables for Data */
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 2rem;
+}
+
+.admin-table th, .admin-table td {
+    padding: 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}

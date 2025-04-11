@@ -4,11 +4,11 @@ A secure, role-based web platform for managing student contributions to the univ
 ---
 
 ## 🔧 Tech Stack
-- **Frontend:** HTML5, CSS3, JavaScript (Bootstrap 5)
+- **Frontend:** HTML5, CSS3, JavaScript
 - **Backend:** PHP
 - **Database:** MySQL
 - **Version Control:** Git + GitHub
-- **Tools:** Trello, Excel, Figma, Google Drive, WhatsApp
+- **Tools:** Trello, Excel, Google Drive, WhatsApp
 
 ---
 
@@ -19,31 +19,6 @@ A secure, role-based web platform for managing student contributions to the univ
 - Guests can view published content
 - Admins manage user roles and permissions
 - Fully responsive design
-
----
-
-## 🧪 Testing
-- Manual & Functional Testing
-- Tools: Postman, Browser Dev Tools
-
----
-
-## 📁 Project Structure
-```bash
-project-root/
-├── frontend/
-│   └── index.html, styles/, scripts/
-├── backend/
-│   └── app.js, routes/, models/
-├── public/
-│   └── uploaded_content/
-├── diagrams/
-│   └── ERD.png, UML.png, wireframes/
-├── docs/
-│   └── assumptions_testplan.md
-├── README.md
-└── .gitignore
-```
 
 ---
 
@@ -72,6 +47,6 @@ project-root/
 
 ## 📜 License
 This project is for educational purposes under COMP1640.
-# student-magazine-submission-system
-A secure, role-based web platform for managing student contributions to the university magazine — developed using Agile Scrum for COMP1640 (Enterprise Web Software Development). 🛠️ Built with teamwork, testing, and real-world web engineering best practices.
+# student-magazine-article-submission-system
+A secure, role-based web platform for managing student contributions to the university magazine — developed using Agile Scrum for COMP1640 (Enterprise Web Software Development).
 

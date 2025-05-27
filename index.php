@@ -4,19 +4,6 @@ ini_set('display_errors', '1');
 ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
-// Initialize secure session
-if (session_status() === PHP_SESSION_NONE) {
-    session_set_cookie_params([
-        'lifetime' => 86400,
-        'path' => '/',
-        'domain' => $_SERVER['HTTP_HOST'] ?? 'localhost',
-        'secure' => true,
-        'httponly' => true,
-        'samesite' => 'Lax'
-    ]);
-    session_start();
-}
-
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/db.php';
 
@@ -26,10 +13,10 @@ try {
     $db = new Database();
     $conn = $db->getConnection();
     
-    // Get current academic year with deadlines
-    $yearStmt = $conn->query("SELECT ay.year, ay.submission_deadline, ay.final_closure_date 
-                             FROM academic_years ay
-                             ORDER BY ay.id DESC LIMIT 1");
+    // Get current academic year with deadlines from planb database
+    $yearStmt = $conn->query("SELECT academic_year, submission_deadline, final_closure_date 
+                             FROM system_settings
+                             ORDER BY id DESC LIMIT 1");
     $currentYearData = $yearStmt->fetch(PDO::FETCH_ASSOC);
     
     if ($currentYearData) {
@@ -40,7 +27,7 @@ try {
         
         $deadlineInfo = '
         <div class="deadlines">
-            <p><strong>Current Academic Year:</strong> ' . htmlspecialchars($currentYearData['year']) . '</p>
+            <p><strong>Current Academic Year:</strong> ' . htmlspecialchars($currentYearData['academic_year']) . '</p>
             <p><strong>Submission Deadline:</strong> ' . $submissionDate . '</p>
             <p><strong>Final Closure Date:</strong> ' . $finalDate . '</p>
         </div>';
@@ -51,31 +38,6 @@ try {
     $deadlineInfo = '<div class="alert">Deadline information is currently unavailable.</div>';
 }
 
-// Check if user is already logged in and role is defined
-if (isset($_SESSION['user_id'], $_SESSION['role'])) {
-    // Redirect based on role - updated to match our database roles
-    switch ($_SESSION['role']) {
-        case 'admin':
-            header('Location: admin/dashboard.php');
-            exit;
-        case 'marketing_manager':
-            header('Location: manager/dashboard.php');
-            exit;
-        case 'marketing_coordinator':
-            header('Location: coordinator/dashboard.php');
-            exit;
-        case 'student':
-            header('Location: student/dashboard.php');
-            exit;
-        case 'guest':
-            header('Location: guest/dashboard.php');
-            exit;
-        default:
-            // Optional: redirect to a general dashboard or logout if role is unknown
-            header('Location: logout.php');
-            exit;
-    }
-}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -245,29 +207,30 @@ if (isset($_SESSION['user_id'], $_SESSION['role'])) {
             <!-- Marketing Manager Card -->
             <div class="role-card">
                 <div class="role-icon">
-                    <i class="fas fa-tasks"></i>
+                    <i class="fas fa-cogs"></i>
                 </div>
                 <h3>Marketing Manager</h3>
-                <p>Oversee the entire magazine process. View selected contributions and generate reports.</p>
+                <p>Oversee all submissions, monitor progress, and manage deadlines for the magazine publication process.</p>
                 <a href="login.php?role=marketing_manager" class="btn-role">
                     <i class="fas fa-sign-in-alt"></i> Manager Login
                 </a>
             </div>
-            
-            <!-- System Admin Card -->
+
+            <!-- Admin Card -->
             <div class="role-card">
                 <div class="role-icon">
-                    <i class="fas fa-cogs"></i>
+                    <i class="fas fa-shield-alt"></i>
                 </div>
-                <h3>System Administrator</h3>
-                <p>Configure system settings, manage users, and maintain system data.</p>
+                <h3>Admin</h3>
+                <p>Manage system settings, user roles, and overall operations of the magazine system.</p>
                 <a href="login.php?role=admin" class="btn-role">
                     <i class="fas fa-sign-in-alt"></i> Admin Login
                 </a>
             </div>
-            
-            <!-- Guest Card -->
-            <div class="role-card">
+        </div>
+
+         <!-- Guest Card -->
+         <div class="role-card">
                 <div class="role-icon">
                     <i class="fas fa-eye"></i>
                 </div>
@@ -283,28 +246,34 @@ if (isset($_SESSION['user_id'], $_SESSION['role'])) {
             <h3><i class="fas fa-user-plus"></i> New to the System?</h3>
             <p>Don't have an account yet? Register for access based on your role:</p>
             <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem;">
-                <a href="register.php?role=student" class="btn-role" style="background: #2ecc71;">
+                <a href="register_student.php?role=student" class="btn-role" style="background: #2ecc71;">
                     <i class="fas fa-user-graduate"></i> Register as Student
                 </a>
-                <a href="register.php?role=marketing_coordinator" class="btn-role" style="background: #9b59b6;">
+                <a href="register_coordinator.php?role=marketing_coordinator" class="btn-role" style="background: #9b59b6;">
                     <i class="fas fa-users-cog"></i> Register as Coordinator
                 </a>
-                <a href="register.php?role=marketing_manager" class="btn-role" style="background: #e67e22;">
+                <a href="register_manager.php?role=marketing_manager" class="btn-role" style="background: #e67e22;">
                     <i class="fas fa-tasks"></i> Register as Manager
                 </a>
             </div>
         </div>
-        
+
         <div class="system-info">
-            <h3><i class="fas fa-info-circle"></i> About the System</h3>
-            <p>The University Magazine System facilitates the collection and management of student contributions for the annual university magazine. Each role has specific responsibilities in the publication process.</p>
+            <h3>System Information</h3>
+            <p>Welcome to the University Magazine System. Please choose your role to proceed.</p>
             
+            <!-- Display deadlines -->
             <?php echo $deadlineInfo; ?>
+
+            <!-- Registration Links -->
+            <div class="registration-links">
+                <p>Not registered yet? <a href="register.php">Sign up here</a> to gain access to the system.</p>
+            </div>
         </div>
+
+        <footer>
+            <p>&copy; <?php echo date('Y'); ?> University Magazine System. All rights reserved.</p>
+        </footer>
     </div>
-    
-    <footer>
-        <p>&copy; <?php echo date('Y'); ?> University Magazine System</p>
-    </footer>
 </body>
 </html>

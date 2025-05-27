@@ -7,6 +7,6 @@ session_unset();
 session_destroy();
 
 // Redirect to the login page in the root directory
-header('Location:../login.php');  // Navigate up one directory to the root
+header('Location:login.php');  // Navigate up one directory to the root
 exit;
 ?>

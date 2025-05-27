@@ -1,141 +1,166 @@
 <?php
 declare(strict_types=1);
 
-// Start session if not already started
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// ✅ Include configuration for DB constants and BASE_URL
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 
 class Auth {
-    private $pdo;
+    private PDO $pdo;
+    private int $maxLoginAttempts = 5;
+    private int $lockoutDuration = 1800; // 30 minutes
 
     public function __construct() {
         $database = new Database();
         $this->pdo = $database->getConnection();
+        $this->initSession();
     }
 
-    /**
-     * Login a user with email, password, and role.
-     */
-    // In your Auth class (includes/auth.php), ensure the login method handles students properly:
-public function login($email, $password, $role) {
-    $db = new Database();
-    $conn = $db->getConnection();
-    
-    try {
-        $stmt = $conn->prepare("SELECT * FROM users WHERE email = :email AND role = :role");
-        $stmt->bindParam(':email', $email);
-        $stmt->bindParam(':role', $role);
-        $stmt->execute();
-        
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$user) {
-            return "No account found with these credentials";
+    private function initSession(): void {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_name('SchoolProjectAuth');
+            session_set_cookie_params([
+                'lifetime' => SESSION_TIMEOUT,
+                'path' => '/',
+                'domain' => $_SERVER['HTTP_HOST'] ?? 'localhost',
+                'secure' => ENVIRONMENT === 'production',
+                'httponly' => true,
+                'samesite' => 'Strict'
+            ]);
+            session_start();
         }
-        
-        if (!password_verify($password, $user['password'])) {
-            return "Invalid password";
-        }
-        
-        // Set session variables
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['user_role'] = $user['role'];
-        $_SESSION['email'] = $user['email'];
-        $_SESSION['first_name'] = $user['first_name'];
-        $_SESSION['last_name'] = $user['last_name'];
-        $_SESSION['faculty_id'] = $user['faculty_id'];
-        
-        // Update last login
-        $this->updateLastLogin($user['id']);
-        
-        return true;
-    } catch (PDOException $e) {
-        error_log("Login error: " . $e->getMessage());
-        return "Database error occurred";
-    }
-}
 
-    /**
-     * Update last login timestamp for user.
-     */
-    private function updateLastLogin(int $userId): void {
-        try {
-            $stmt = $this->pdo->prepare("
-                UPDATE users 
-                SET last_login = NOW() 
-                WHERE id = :id
-            ");
-            $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
-            $stmt->execute();
-        } catch (PDOException $e) {
-            error_log("Last login update error: " . $e->getMessage());
+        if (!isset($_SESSION['created'])) {
+            $_SESSION['created'] = time();
+        } elseif (time() - $_SESSION['created'] > 1800) {
+            session_regenerate_id(true);
+            $_SESSION['created'] = time();
         }
+    }
+
+    public function getUserRole(): ?string {
+        return $_SESSION['user_role'] ?? null;
+    }
+
+    public function updatePassword(int $userId, string $newPassword): void {
+        $stmt = $this->pdo->prepare("UPDATE users SET password = :password WHERE id = :id");
+        $stmt->execute([
+            'password' => password_hash($newPassword, PASSWORD_DEFAULT),
+            'id' => $userId
+        ]);
+    }
+
+    public function updateLastLogin(int $userId): void {
+        $stmt = $this->pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = :id");
+        $stmt->execute(['id' => $userId]);
+    }
+
+    private function isLockedOut(string $email): bool {
+        $stmt = $this->pdo->prepare("SELECT failed_attempts, last_failed_at FROM login_attempts WHERE email = :email LIMIT 1");
+        $stmt->execute(['email' => $email]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($result) {
+            $failedAttempts = (int) $result['failed_attempts'];
+            $lastFailedAt = strtotime($result['last_failed_at']);
+            $elapsed = time() - $lastFailedAt;
+
+            if ($failedAttempts >= $this->maxLoginAttempts && $elapsed < $this->lockoutDuration) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function isLoggedIn(): bool {
         return isset($_SESSION['user_id']);
     }
+    
 
-    public function getUserRole(): ?string {
-        return $_SESSION['role'] ?? null;
+    private function logFailedAttempt(string $email): void {
+        $stmt = $this->pdo->prepare("
+            INSERT INTO login_attempts (email, failed_attempts, last_failed_at)
+            VALUES (:email, 1, NOW())
+            ON DUPLICATE KEY UPDATE 
+                failed_attempts = failed_attempts + 1,
+                last_failed_at = NOW()
+        ");
+        $stmt->execute(['email' => $email]);
     }
 
-    public function getUserFaculty(): ?string {
-        return $_SESSION['faculty_id'] ?? null;
+    private function resetFailedAttempts(string $email): void {
+        $stmt = $this->pdo->prepare("DELETE FROM login_attempts WHERE email = :email");
+        $stmt->execute(['email' => $email]);
     }
 
-    public function getLastLogin(): ?string {
-        return $_SESSION['last_login'] ?? null;
-    }
+    public function login(string $email, string $password): bool|string {
+        if ($this->isLockedOut($email)) {
+            return "Account temporarily locked. Please try again later.";
+        }
 
-    /**
-     * Redirect user to login if not authenticated.
-     */
-    public function redirectIfNotLoggedIn(): void {
-        if (!$this->isLoggedIn()) {
-            header("Location: " . BASE_URL . "login.php");
-            exit();
+        try {
+            $stmt = $this->pdo->prepare("
+                SELECT u.*, f.name AS faculty_name 
+                FROM users u
+                LEFT JOIN faculties f ON u.faculty_id = f.id
+                WHERE u.email = :email
+                LIMIT 1
+            ");
+            $stmt->execute(['email' => $email]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$user || !password_verify($password, $user['password'])) {
+                $this->logFailedAttempt($email);
+                return "Invalid email or password.";
+            }
+
+            // Set session values
+            $_SESSION['user_id'] = (int) $user['id'];
+            $_SESSION['user_email'] = $user['email'];
+            $_SESSION['user_name'] = $user['name'] ?? '';
+            $_SESSION['user_role'] = $user['role'] ?? '';
+            $_SESSION['faculty_name'] = $user['faculty_name'] ?? '';
+            $_SESSION['faculty_id'] =(int) $user['faculty_id'];
+
+            $this->resetFailedAttempts($email);
+            $this->updateLastLogin((int) $user['id']);
+
+            // Associative array for role-based redirection
+            $roleRedirects = [
+                'admin' => 'admin/dashboard.php',
+                'marketing_coordinator' => 'coordinator/dashboard.php',
+                'student' => 'student/dashboard.php',
+                'marketing_manager' => 'manager/dashboard.php'
+            ];
+
+            $role = strtolower($user['role'] ?? '');
+
+            // Check if the role exists and redirect
+            if (array_key_exists($role, $roleRedirects)) {
+                header("Location: " . $roleRedirects[$role]);
+                exit;
+            } else {
+                return "Unauthorized user role.";
+            }
+
+    
+
+        } catch (PDOException $e) {
+            error_log("Login error: " . $e->getMessage());
+            return "An error occurred during login. Please try again.";
         }
     }
 
-    /**
-     * Redirect user if their role is not authorized.
-     */
-    public function redirectIfNotAuthorized(array $allowedRoles): void {
-        $this->redirectIfNotLoggedIn();
-        if (!in_array($this->getUserRole(), $allowedRoles)) {
-            header("Location: " . BASE_URL . "unauthorized.php");
-            exit();
+    public function redirectIfNotAuthorized(array $allowedRoles = []): void {
+        $userRole = $_SESSION['user_role'] ?? null;
+
+        if (!$userRole || (!empty($allowedRoles) && !in_array($userRole, $allowedRoles))) {
+            // Display Unauthorized Access message
+            header('HTTP/1.1 403 Forbidden');
+            echo '<h1>Unauthorized Access</h1>';
+            echo '<p>You do not have permission to access this page.</p>';
+            exit; // Stop further execution
         }
-    }
-
-    /**
-     * Logout the user and destroy session.
-     */
-    public function logout(): void {
-        $_SESSION = [];
-
-        if (ini_get("session.use_cookies")) {
-            $params = session_get_cookie_params();
-            setcookie(
-                session_name(),
-                '',
-                time() - 42000,
-                $params["path"],
-                $params["domain"],
-                $params["secure"],
-                $params["httponly"]
-            );
-        }
-
-        session_destroy();
-
-        header("Location: " . BASE_URL . "login.php");
-        exit();
     }
 }
+?>

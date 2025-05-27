@@ -1,74 +1,73 @@
 <?php
 require '../includes/config.php';
 require '../includes/auth.php';
-require '../includes/admin_auth.php';
+//require '../includes/admin_auth.php';
 
 $db = (new Database())->getConnection();
 
 // Get academic years
-$years = $db->query("SELECT DISTINCT academic_year FROM submissions ORDER BY academic_year DESC")->fetchAll(PDO::FETCH_COLUMN);
+$years = $db->query("SELECT DISTINCT year FROM academic_years ORDER BY year DESC")->fetchAll(PDO::FETCH_COLUMN);
 
 // Set default year
-$current_year = $_GET['year'] ?? $db->query("SELECT academic_year FROM settings LIMIT 1")->fetchColumn();
-
+$current_year = $_GET['year'] ?? $db->query("SELECT year FROM academic_years ORDER BY year DESC LIMIT 1")->fetchColumn();
 // Generate reports
-$reports = [];
-
-// Faculty Contributions
-$reports['faculty_contributions'] = $db->prepare("
-    SELECT faculty, COUNT(*) as count 
-    FROM submissions 
-    WHERE academic_year = :year
-    GROUP BY faculty
+$facultyStmt = $db->prepare("
+    SELECT f.name AS faculty, COUNT(c.id) AS count
+    FROM contributions c
+    JOIN faculties f ON c.faculty_id = f.id
+    JOIN academic_years ay ON c.academic_year_id = ay.id
+    WHERE ay.year = :year
+    GROUP BY f.name
     ORDER BY count DESC
 ");
-$reports['faculty_contributions']->execute([':year' => $current_year]);
+$facultyStmt->execute([':year' => $current_year]);
+$facultyData = $facultyStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Contributors per Faculty
-$reports['contributors'] = $db->prepare("
-    SELECT faculty, COUNT(DISTINCT student_id) as count 
-    FROM submissions 
-    WHERE academic_year = :year
-    GROUP BY faculty
+$contributorStmt = $db->prepare("
+    SELECT f.name AS faculty, COUNT(DISTINCT c.student_id) AS count
+    FROM contributions c
+    JOIN faculties f ON c.faculty_id = f.id
+    JOIN academic_years ay ON c.academic_year_id = ay.id
+    WHERE ay.year = :year
+    GROUP BY f.name
     ORDER BY count DESC
 ");
-$reports['contributors']->execute([':year' => $current_year]);
+$contributorStmt->execute([':year' => $current_year]);
+$contributorData = $contributorStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Overdue Comments
-$reports['overdue_comments'] = $db->prepare("
-    SELECT s.id, s.title, u.name as student, s.created_at
-    FROM submissions s
-    JOIN users u ON s.student_id = u.id
-    WHERE s.academic_year = :year
-    AND s.status = 'submitted'
-    AND s.created_at < DATE_SUB(NOW(), INTERVAL 14 DAY)
-    AND s.coordinator_comment IS NULL
+$overdueStmt = $db->prepare("
+    SELECT c.title, u.username AS student, c.submission_date
+    FROM contributions c
+    JOIN users u ON c.student_id = u.id
+    JOIN academic_years ay ON c.academic_year_id = ay.id
+    LEFT JOIN comments com ON com.contribution_id = c.id
+    WHERE ay.year = :year
+      AND c.status = 'submitted'
+      AND c.submission_date < DATE_SUB(NOW(), INTERVAL 14 DAY)
+      AND (com.comment IS NULL OR com.comment = '')
 ");
-$reports['overdue_comments']->execute([':year' => $current_year]);
+
+$overdueStmt->execute([':year' => $current_year]);
+$overdueSubmissions = $overdueStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Export to CSV
-if(isset($_GET['export'])) {
+if (isset($_GET['export'])) {
     header('Content-Type: text/csv');
     header('Content-Disposition: attachment; filename="report_' . $current_year . '.csv"');
-    
     $output = fopen('php://output', 'w');
-    
-    switch($_GET['export']) {
-        case 'faculty':
-            fputcsv($output, ['Faculty', 'Submissions']);
-            while($row = $reports['faculty_contributions']->fetch(PDO::FETCH_ASSOC)) {
-                fputcsv($output, $row);
-            }
-            break;
-            
-        case 'contributors':
-            fputcsv($output, ['Faculty', 'Unique Contributors']);
-            while($row = $reports['contributors']->fetch(PDO::FETCH_ASSOC)) {
-                fputcsv($output, $row);
-            }
-            break;
+
+    if ($_GET['export'] === 'faculty') {
+        fputcsv($output, ['Faculty', 'Submissions']);
+        foreach ($facultyData as $row) {
+            fputcsv($output, $row);
+        }
+    } elseif ($_GET['export'] === 'contributors') {
+        fputcsv($output, ['Faculty', 'Unique Contributors']);
+        foreach ($contributorData as $row) {
+            fputcsv($output, $row);
+        }
     }
-    
+
     fclose($output);
     exit;
 }
@@ -79,70 +78,69 @@ if(isset($_GET['export'])) {
 <head>
     <title>Reports</title>
     <link href="../assets/css/admin.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <?php include '../includes/admin_header.php'; ?>
+<?php include '../includes/header.php'; ?>
     
     <div class="container">
         <h1>Reporting System</h1>
         
         <form method="get" class="year-selector">
-            <label>Academic Year:</label>
-            <select name="year">
-                <?php foreach($years as $year): ?>
-                <option value="<?= $year ?>" <?= $year == $current_year ? 'selected' : '' ?>>
-                    <?= $year ?>
+        <label>Academic Year:</label>
+        <select name="year" class="select-tab">
+            <?php foreach ($years as $year): ?>
+                <option value="<?= htmlspecialchars($year) ?>" <?= $year == $current_year ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($year) ?>
                 </option>
-                <?php endforeach; ?>
-            </select>
-            <button type="submit">Generate Reports</button>
-        </form>
+            <?php endforeach; ?>
+        </select>
+
+        <button type="submit" class="btn export">Generate Reports</button>
+    </form>
         
-        <div class="report-section">
-            <h2>Faculty Contributions (<?= $current_year ?>)</h2>
-            
-            <div class="row">
-                <div class="chart-container">
-                    <canvas id="facultyChart"></canvas>
-                </div>
-                
-                <div class="table-actions">
-                    <table>
-                        <tr>
-                            <th>Faculty</th>
-                            <th>Submissions</th>
-                            <th>Percentage</th>
-                        </tr>
-                        <?php 
-                        $total = 0;
-                        $facultyData = $reports['faculty_contributions']->fetchAll(PDO::FETCH_ASSOC);
-                        $total = array_sum(array_column($facultyData, 'count'));
-                        ?>
-                        
-                        <?php foreach($facultyData as $row): ?>
-                        <tr>
-                            <td><?= $row['faculty'] ?></td>
-                            <td><?= $row['count'] ?></td>
-                            <td><?= round(($row['count'] / $total) * 100, 1) ?>%</td>
-                        </tr>
-                        <?php endforeach; ?>
-                        <tr class="total">
-                            <td>Total</td>
-                            <td><?= $total ?></td>
-                            <td>100%</td>
-                        </tr>
-                    </table>
-                    
-                    <a href="reports.php?year=<?= $current_year ?>&export=faculty" class="btn export">Export to CSV</a>
-                </div>
+    <div class="report-section">
+        <h2>Faculty Contributions (<?= htmlspecialchars($current_year) ?>)</h2>
+
+        <div class="row">
+            <div class="chart-container">
+                <canvas id="facultyChart"></canvas>
             </div>
+
+                <table>
+                    <tr>
+                        <th>Faculty</th>
+                        <th>Submissions</th>
+                        <th>Percentage</th>
+                    </tr>
+                    <?php
+                    $totalSubmissions = array_sum(array_column($facultyData, 'count'));
+                    foreach ($facultyData as $row):
+                    ?>
+                    <tr>
+                        <td><?= htmlspecialchars($row['faculty']) ?></td>
+                        <td><?= $row['count'] ?></td>
+                        <td><?= $totalSubmissions ? round(($row['count'] / $totalSubmissions) * 100, 1) : 0 ?>%</td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr class="total">
+                        <td>Total</td>
+                        <td><?= $totalSubmissions ?></td>
+                        <td>100%</td>
+                    </tr>
+                </table> 
+           
+
+                <a href="reports.php?year=<?= urlencode($current_year) ?>&export=faculty" class="btn export">Export to CSV</a>
+           
         </div>
+    </div>
         
-        <div class="report-section">
-            <h2>Overdue Comments (<?= $current_year ?>)</h2>
-            
-            <?php if($reports['overdue_comments']->rowCount() > 0): ?>
+    <div class="report-section">
+        <h2>Overdue Comments (<?= htmlspecialchars($current_year) ?>)</h2>
+
+        <?php if (count($overdueSubmissions) > 0): ?>
             <table>
                 <tr>
                     <th>Submission Title</th>
@@ -150,53 +148,46 @@ if(isset($_GET['export'])) {
                     <th>Submitted On</th>
                     <th>Days Overdue</th>
                 </tr>
-                <?php while($row = $reports['overdue_comments']->fetch(PDO::FETCH_ASSOC)): 
-                    $days = floor((time() - strtotime($row['created_at'])) / (60 * 60 * 24)) - 14;
+                <?php foreach ($overdueSubmissions as $row):
+                    $daysOverdue = floor((time() - strtotime($row['submission_date'])) / (60 * 60 * 24)) - 14;
                 ?>
                 <tr>
                     <td><?= htmlspecialchars($row['title']) ?></td>
                     <td><?= htmlspecialchars($row['student']) ?></td>
-                    <td><?= date('M j, Y', strtotime($row['created_at'])) ?></td>
-                    <td class="<?= $days > 7 ? 'critical' : 'warning' ?>"><?= $days ?></td>
+                    <td><?= date('M j, Y', strtotime($row['submission_date'])) ?></td>
+                    <td class="<?= $daysOverdue > 7 ? 'critical' : 'warning' ?>">
+                        <?= $daysOverdue ?>
+                    </td>
                 </tr>
-                <?php endwhile; ?>
+                <?php endforeach; ?>
             </table>
-            <?php else: ?>
-                <p>No submissions with overdue comments.</p>
-            <?php endif; ?>
-        </div>
+        <?php else: ?>
+            <p>No submissions with overdue comments.</p>
+        <?php endif; ?>
     </div>
+</>
     
-    <script>
-        // Faculty Contributions Chart
-        const facultyData = [
-            <?php 
-            foreach($facultyData as $row) {
-                echo "{faculty: '" . addslashes($row['faculty']) . "', count: " . $row['count'] . "},";
-            }
-            ?>
-        ];
-        
-        const ctx = document.getElementById('facultyChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: facultyData.map(item => item.faculty),
-                datasets: [{
-                    label: 'Submissions',
-                    data: facultyData.map(item => item.count),
-                    backgroundColor: 'rgba(54, 162, 235, 0.7)'
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    </script>
+<script>
+const facultyData = <?= json_encode($facultyData) ?>;
+
+const ctx = document.getElementById('facultyChart').getContext('2d');
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: facultyData.map(item => item.faculty),
+        datasets: [{
+            label: 'Submissions',
+            data: facultyData.map(item => item.count),
+            backgroundColor: 'rgba(54, 162, 235, 0.7)'
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { beginAtZero: true }
+        }
+    }
+});
+</script>
 </body>
 </html>

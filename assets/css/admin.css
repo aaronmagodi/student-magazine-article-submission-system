@@ -1,16 +1,31 @@
 /* admin.css */
 
-/* Admin Dashboard */
+/* Admin Dashboard  */
 .admin-dashboard {
     background-color: var(--surface-color);
     padding: 2rem;
     border-radius: 8px;
     box-shadow: var(--shadow);
 }
+.form-group {
+    margin-bottom: 1.5rem;
+}
 
 .admin-dashboard h2 {
     font-size: 1.5rem;
     font-weight: 600;
+}
+
+.btn-submit {
+    width: 100%;
+    padding: 0.75rem;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background 0.3s;
 }
 
 /* Admin Management Buttons */
@@ -38,4 +53,13 @@
     padding: 1rem;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
+}
+
+.table-actions {
+    padding: 1rem 2rem;
+
+
+}
+.select-tab{
+    width:30%;
 }

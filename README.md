@@ -27,13 +27,6 @@ A secure, role-based web platform for managing student contributions to the univ
 - **Team Members:** Andrew Mwape (Dtabase designer), Chipo (Product Owner), Information Architect (Crispin Ngulube), Kaozya (Database designer), Programmer/ Backend (Mucho Maluma, Charles), Testers (Nkombo Mukwati, Progress Hangandu)
 ---
 
-## 📊 Sprints (TBD by team)
-- Sprint 1: Authentication, Upload, Role Access
-- Sprint 2: Comments, Guest Access, Download ZIP
-- Sprint 3: Stats, Admin tools, UI polish & testing
-
----
-
 ## 📌 How to Contribute
 ```bash
 # 1. Fork the repo

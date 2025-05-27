@@ -1,13 +1,18 @@
 <?php
+session_start();  // Always start the session at the top of the page
+
 require_once '../includes/auth.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
 $auth = new Auth();
-$auth->redirectIfNotAuthorized(['admin']);
+$auth->redirectIfNotAuthorized(['admin']);  // Only 'admin' can access this page
 
+// Initialize database connection
 $db = new Database();
 $conn = $db->getConnection();
+
+
 
 // Get admin information
 $adminStmt = $conn->prepare("SELECT * FROM users WHERE id = :user_id");
@@ -20,8 +25,8 @@ $statsStmt = $conn->query("
     SELECT 
         COUNT(*) as total_users,
         SUM(CASE WHEN role = 'student' THEN 1 ELSE 0 END) as student_count,
-        SUM(CASE WHEN role = 'coordinator' THEN 1 ELSE 0 END) as coordinator_count,
-        SUM(CASE WHEN role = 'manager' THEN 1 ELSE 0 END) as manager_count,
+        SUM(CASE WHEN role = 'marketing_coordinator' THEN 1 ELSE 0 END) as coordinator_count,
+        SUM(CASE WHEN role = 'marketing_manager' THEN 1 ELSE 0 END) as manager_count,
         SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin_count
     FROM users
 ");
@@ -35,14 +40,15 @@ $activitiesStmt = $conn->query("
 ");
 $activities = $activitiesStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - University Magazine</title>
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/styles.css">
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/admin.css">
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="../assets/css/admin.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         .dashboard-container {
@@ -109,15 +115,17 @@ $activities = $activitiesStmt->fetchAll(PDO::FETCH_ASSOC);
     <?php include '../includes/header.php'; ?>
     
     <div class="dashboard-container">
-        <div class="welcome-message">
+     <div class="welcome-message">
             <h1>Welcome, <?php echo htmlspecialchars($admin['first_name'] . ' ' . $admin['last_name']); ?></h1>
             <p>System Administration Dashboard</p>
             <?php if ($admin['last_login']): ?>
                 <p>Last login: <?php echo date('F j, Y \a\t g:i a', strtotime($admin['last_login'])); ?></p>
             <?php endif; ?>
-        </div>
+     </div>
         
         <h2>System Statistics</h2>
+
+
         <div class="stat-cards">
             <div class="stat-card">
                 <div class="stat-number"><?php echo $stats['total_users']; ?></div>

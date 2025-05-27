@@ -1,4 +1,5 @@
 <?php
+
 declare(strict_types=1);
 ini_set('display_errors', '1');
 ini_set('display_startup_errors', '1');
@@ -51,7 +52,7 @@ $allowUpdates = true;
 
 // Get student's existing contributions
 $contributionsStmt = $db->prepare("
-    SELECT c.contribution_id, c.title, c.status, c.submission_date 
+    SELECT c.id, c.title, c.status, c.submission_date 
     FROM contributions c
     WHERE c.student_id = ?
     ORDER BY c.submission_date DESC
@@ -59,220 +60,158 @@ $contributionsStmt = $db->prepare("
 $contributionsStmt->execute([$_SESSION['user_id']]);
 $existingContributions = $contributionsStmt->fetchAll();
 
-// Process form submission
 $error = '';
 $success = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Verify CSRF token
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         $error = 'Invalid request. Please try again.';
-    }
-    // Check submission period
-    elseif (!$allowNewSubmissions && empty($_POST['contribution_id'])) {
+    } elseif (!$allowNewSubmissions && empty($_POST['contribution_id'])) {
         $error = 'The submission period for new entries has closed';
-    }
-    // Check final deadline
-    elseif (!$allowUpdates) {
+    } elseif (!$allowUpdates) {
         $error = 'The final submission deadline has passed';
     } else {
-        // Process form data
         $title = sanitizeInput($_POST['title'] ?? '');
+$faculty_id = $_SESSION['faculty_id'] ?? null;
+
+if (!$faculty_id) {
+    throw new Exception("Faculty information not available in session.");
+}
+
+$academicYearStmt = $db->prepare("
+    SELECT ay.id 
+    FROM academic_years ay
+    INNER JOIN faculties f ON ay.faculty_id = f.id
+    WHERE ay.is_current = 1 AND f.id = ?
+    LIMIT 1
+");
+$academicYearStmt->execute([$faculty_id]);
+$currentYear = $academicYearStmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$currentYear) {
+    throw new Exception("No current academic year set for your faculty.");
+}
+
+$academic_year_id = $currentYear['id'];
         $abstract = sanitizeInput($_POST['abstract'] ?? '');
         $contribution_id = $_POST['contribution_id'] ?? null;
-        $academic_year_id = $_POST['academic_year_id'] ?? null;  // Added academic_year_id
+        $academicYearsStmt = $db->query("SELECT id, year FROM academic_years ORDER BY year DESC");
+$academicYears = $academicYearsStmt->fetchAll();
 
-        // Validate input
+
         if (empty($title)) {
             $error = 'Title is required';
         } elseif (strlen($title) > 255) {
             $error = 'Title must be less than 255 characters';
-        } elseif (empty($academic_year_id)) {
-            // Temporarily bypass the academic year validation for testing
-            $academic_year_id = 1; // Default academic year ID, can change as needed for testing
-            // $error = 'Academic Year is required'; // Temporarily bypass this validation
         } elseif (empty($_FILES['word_file']['name']) && empty($contribution_id)) {
             $error = 'Word document is required for new submissions';
-        } else {
+       }  else {
             try {
                 $db->beginTransaction();
 
-                // Validate academic_year_id existence (skip for testing)
-                if ($academic_year_id) {
-                    $academicYearStmt = $db->prepare("SELECT 1 FROM academic_years WHERE id = ?");
-                    $academicYearStmt->execute([$academic_year_id]);
-                    if ($academicYearStmt->rowCount() === 0) {
-                        throw new Exception("The provided academic year ID does not exist.");
+               /* // Validate academic year
+               $academicYearStmt = $db->prepare("SELECT 1 FROM academic_years WHERE id = ?");
+                $academicYearStmt->execute([$academic_year_id]);
+                if ($academicYearStmt->rowCount() === 0) {
+                 throw new Exception("Invalid academic year selected.");
+               }
+                    */
+               /* function seedAcademicYears(PDO $db): void {
+                    $years = [
+                        ['year' => '2023/2024', 'submission_deadline' => '2024-04-30', 'final_closure_date' => '2024-05-15', 'is_current' => 0],
+                        ['year' => '2024/2025', 'submission_deadline' => '2025-04-30', 'final_closure_date' => '2025-05-15', 'is_current' => 1]
+                    ];
+
+                    foreach ($years as $data) {
+                        $stmt = $db->prepare("SELECT id FROM academic_years WHERE year = ?");
+                        $stmt->execute([$data['year']]);
+                        if ($stmt->rowCount() === 0) {
+                            $insert = $db->prepare("INSERT INTO academic_years (year, submission_deadline, final_closure_date, is_current) VALUES (?, ?, ?, ?)");
+                            $insert->execute([$data['year'], $data['submission_deadline'], $data['final_closure_date'], $data['is_current']]);
+                        }
                     }
-                }
+                }*/
 
-                // Handle file uploads
+               // $db->beginTransaction();
+                //seedAcademicYears($db);
+
                 $wordFilePath = null;
-                $imagePaths = [];
-
-                // Process Word document
                 if (!empty($_FILES['word_file']['name'])) {
                     $wordFile = $_FILES['word_file'];
-                    
                     if ($wordFile['error'] !== UPLOAD_ERR_OK) {
                         throw new Exception("Error uploading Word document: " . getUploadError($wordFile['error']));
                     }
-                    
+
                     $fileExt = strtolower(pathinfo($wordFile['name'], PATHINFO_EXTENSION));
                     if (!in_array($fileExt, ['doc', 'docx'])) {
-                        throw new Exception("Only Word documents (.doc, .docx) are allowed");
+                        throw new Exception("Only Word documents (.doc, .docx) are allowed.");
                     }
-                    
+
                     $wordFileName = 'contribution_' . ($contribution_id ?? 'new') . '_' . time() . '.' . $fileExt;
-                    $wordFilePath = '../uploads/documents/' . $wordFileName;
-                    
-                    if (!is_dir('../uploads/documents')) {
-                        mkdir('../uploads/documents', 0755, true);
+                    $uploadDir = __DIR__ . '/../uploads/contributions/';
+                    if (!is_dir($uploadDir)) {
+                        mkdir($uploadDir, 0755, true);
                     }
-                    
-                    if (!move_uploaded_file($wordFile['tmp_name'], $wordFilePath)) {
-                        throw new Exception("Failed to save Word document");
-                    }
+                    $wordFilePath = $uploadDir . $wordFileName;
+                    move_uploaded_file($wordFile['tmp_name'], $wordFilePath);
                 }
 
-                // Process images
-                if (!empty($_FILES['images']['name'][0])) {
-                    if (!is_dir('../uploads/images')) {
-                        mkdir('../uploads/images', 0755, true);
-                    }
+                if ($contribution_id) {
+                    // Update existing contribution
+                    $updateStmt = $db->prepare("UPDATE contributions SET title = ?, abstract = ?, academic_year_id = ?, word_file_path = ?, updated_at = NOW() WHERE id = ? AND student_id = ?");
+                    $updateStmt->execute([$title, $abstract, $academic_year_id, $wordFilePath, $contribution_id, $_SESSION['user_id']]);
+                } else {
+                    // Insert new contribution
+                    $insertStmt = $db->prepare("INSERT INTO contributions (user_id, faculty_id, student_id, title, abstract, academic_year_id, word_file_path, submission_date, status) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 'submitted')");
+                    $insertStmt->execute([
+                        $_SESSION['user_id'],               // user_id
+                        $_SESSION['faculty_id'] ?? null,    // faculty_id (optional: ensure it's in session or set default)
+                        $_SESSION['user_id'],               // student_id (assuming student is user)
+                        $title,
+                        $abstract,
+                        $academic_year_id,
+                        $wordFilePath
+                    ]);
+                    $contribution_id = (int)$db->lastInsertId();
                     
-                    foreach ($_FILES['images']['tmp_name'] as $key => $tmpName) {
-                        if ($_FILES['images']['error'][$key] === UPLOAD_ERR_OK) {
-                            $imageFile = [
-                                'name' => $_FILES['images']['name'][$key],
-                                'tmp_name' => $tmpName,
-                                'size' => $_FILES['images']['size'][$key]
-                            ];
-                            
-                            $imageExt = strtolower(pathinfo($imageFile['name'], PATHINFO_EXTENSION));
-                            if (!in_array($imageExt, ['jpg', 'jpeg', 'png', 'gif'])) {
-                                continue; // Skip invalid image types
-                            }
-                            
-                            $imageFileName = 'image_' . ($contribution_id ?? 'new') . '_' . time() . '_' . $key . '.' . $imageExt;
-                            $imageFilePath = '../uploads/images/' . $imageFileName;
-                            
-                            if (move_uploaded_file($imageFile['tmp_name'], $imageFilePath)) {
-                                $imagePaths[] = [
-                                    'path' => $imageFilePath,
-                                    'name' => $imageFile['name']
-                                ];
-                            }
+                    // Insert Word document into word_documents table
+                    $wordDocumentStmt = $db->prepare("INSERT INTO word_documents (contribution_id, file_name, file_path) VALUES (?, ?, ?)");
+                    $wordDocumentStmt->execute([$contribution_id, $wordFileName, $wordFilePath]);
+                }
+
+                // Handle optional image uploads
+                if (!empty($_FILES['images']['name'][0])) {
+                    $imageUploadDir = __DIR__ . '/../uploads/contribution_images/';
+                    if (!is_dir($imageUploadDir)) {
+                        mkdir($imageUploadDir, 0755, true);
+                    }
+
+                    foreach ($_FILES['images']['name'] as $index => $imageName) {
+                        $imageTmp = $_FILES['images']['tmp_name'][$index];
+                        $imageError = $_FILES['images']['error'][$index];
+                        $imageExt = strtolower(pathinfo($imageName, PATHINFO_EXTENSION));
+
+                        if ($imageError === UPLOAD_ERR_OK && in_array($imageExt, ['jpg', 'jpeg', 'png', 'gif'])) {
+                            $newImageName = 'img_' . $contribution_id . '_' . time() . '_' . $index . '.' . $imageExt;
+                            $targetPath = $imageUploadDir . $newImageName;
+                            move_uploaded_file($imageTmp, $targetPath);
+
+                            $imgStmt = $db->prepare("INSERT INTO images (contribution_id, file_name, file_path) VALUES (?, ?, ?)");
+                            $imgStmt->execute([$contribution_id, $newImageName, $targetPath]);
                         }
                     }
                 }
 
-                // Insert or update contribution
-                if ($contribution_id) {
-                    // Update existing contribution
-                    $stmt = $db->prepare("
-                        UPDATE contributions 
-                        SET title = ?, abstract = ?, academic_year_id = ?, updated_at = NOW()
-                        WHERE contribution_id = ? AND student_id = ?
-                    ");
-                    $stmt->execute([
-                        $title, 
-                        $abstract, 
-                        $academic_year_id, 
-                        $contribution_id, 
-                        $_SESSION['user_id'] // Using user_id as student_id
-                    ]);
-                } else {
-                    // Create new contribution
-                    $stmt = $db->prepare("
-                        INSERT INTO contributions 
-                        (student_id, faculty_id, academic_year_id, title, abstract, submission_date, status)
-                        VALUES (?, ?, ?, ?, ?, NOW(), 'submitted')
-                    ");
-                    $stmt->execute([
-                        $_SESSION['user_id'], // student_id
-                        $_SESSION['faculty_id'],
-                        $academic_year_id,  // Insert academic_year_id
-                        $title,
-                        $abstract
-                    ]);
-                    $contribution_id = $db->lastInsertId();
-                }
-
-                // Add Word document to materials
-                if ($wordFilePath) {
-                    $stmt = $db->prepare("
-                        INSERT INTO contribution_materials
-                        (contribution_id, file_path, file_name, file_type)
-                        VALUES (?, ?, ?, 'word')
-                    ");
-                    $stmt->execute([
-                        $contribution_id,
-                        $wordFilePath,
-                        $_FILES['word_file']['name']
-                    ]);
-                }
-
-                // Add images to materials
-                foreach ($imagePaths as $image) {
-                    $stmt = $db->prepare("
-                        INSERT INTO contribution_materials
-                        (contribution_id, file_path, file_name, file_type)
-                        VALUES (?, ?, ?, 'image')
-                    ");
-                    $stmt->execute([
-                        $contribution_id,
-                        $image['path'],
-                        $image['name']
-                    ]);
-                }
-
                 $db->commit();
-
-                // Send notification to coordinator
-                $coordinatorStmt = $db->prepare("
-                    SELECT email FROM users 
-                    WHERE faculty_id = ? AND role = 'marketing_coordinator'
-                    LIMIT 1
-                ");
-                $coordinatorStmt->execute([$_SESSION['faculty_id']]);
-                $coordinator = $coordinatorStmt->fetch();
-
-                if ($coordinator) {
-                    $email = new EmailNotifier();
-                    $email->send(
-                        $coordinator['email'],
-                        'New Contribution Submission',
-                        "A new contribution has been submitted:\n\n" . 
-                        "Title: $title\n" . 
-                        "Student: {$_SESSION['user_name']}\n" . 
-                        "Faculty: {$_SESSION['faculty_name']}\n\n" . 
-                        "Please review within 14 days."
-                    );
-                }
-
-                $success = $contribution_id ? 'Contribution updated successfully!' : 'Contribution submitted successfully!';
-                header("Location: submit.php?success=" . urlencode($success));
-                exit;
-
+                $success = 'Your contribution has been successfully submitted!';
             } catch (Exception $e) {
                 $db->rollBack();
-
-                // Clean up uploaded files if transaction failed
-                if ($wordFilePath && file_exists($wordFilePath)) {
-                    unlink($wordFilePath);
-                }
-                foreach ($imagePaths as $image) {
-                    if (file_exists($image['path'])) {
-                        unlink($image['path']);
-                    }
-                }
-
                 $error = 'Submission failed: ' . $e->getMessage();
-                error_log("Contribution submission error: " . $e->getMessage());
             }
         }
     }
 }
+
 ?>
 
 <!DOCTYPE html>
@@ -281,144 +220,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= $allowNewSubmissions ? 'Submit Contribution' : 'Update Contribution' ?></title>
+    <link rel="stylesheet" href="<?php echo BASE_URL; ?>../assets/css/styles.css">
     <link rel="stylesheet" href="../assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        .container {
-            max-width: 800px;
-            margin: 2rem auto;
-            padding: 0 1rem;
-        }
-        .card {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            padding: 2rem;
-            margin-bottom: 2rem;
-        }
-        .alert {
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            border-radius: 6px;
-        }
-        .alert-error {
-            background: #ffebee;
-            color: #c62828;
-            border-left: 4px solid #ef9a9a;
-        }
-        .alert-success {
-            background: #e8f5e9;
-            color: #2e7d32;
-            border-left: 4px solid #a5d6a7;
-        }
-        .alert-warning {
-            background: #fff8e1;
-            color: #e65100;
-            border-left: 4px solid #ffcc80;
-        }
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
-        input[type="text"], textarea, select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 1rem;
-        }
-        textarea {
-            min-height: 150px;
-        }
-        .file-upload {
-            border: 2px dashed #ddd;
-            padding: 2rem;
-            text-align: center;
-            margin: 1rem 0;
-            border-radius: 6px;
-        }
-        .file-upload.drag-over {
-            border-color: #3498db;
-            background: #f8fafc;
-        }
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.75rem 1.5rem;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.3s ease;
-        }
-        .btn-primary {
-            background: #3498db;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #2980b9;
-            transform: translateY(-2px);
-        }
-        .btn-secondary {
-            background: #f1f1f1;
-            color: #333;
-        }
-        .btn-secondary:hover {
-            background: #e0e0e0;
-        }
-        .file-preview {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-        .file-item {
-            width: 120px;
-            text-align: center;
-        }
-        .file-item img {
-            max-width: 100%;
-            max-height: 80px;
-        }
-        .file-name {
-            font-size: 0.8rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .existing-files {
-            margin: 1rem 0;
-        }
-        .file-row {
-            display: flex;
-            align-items: center;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid #eee;
-        }
-        .file-row:last-child {
-            border-bottom: none;
-        }
-        .terms-check {
-            margin: 1.5rem 0;
-        }
-        @media (max-width: 768px) {
-            .container {
-                padding: 0;
-            }
-            .card {
-                border-radius: 0;
-            }
-        }
-    </style>
+  
 </head>
 <body>
     <?php include '../includes/header.php'; ?>
-    
+    <!-- Buttons for Logout and Back to Dashboard -->
+     
+   
+
+
     <div class="container">
         <div class="card">
             <h1><?= $allowNewSubmissions ? 'Submit New Contribution' : 'Update Contribution' ?></h1>
@@ -464,6 +277,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </select>
                         </div>
                         
+                        <form method="POST" enctype="multipart/form-data">
+    <!-- CSRF token and other fields -->
+
+    <label for="new_academic_year">Add New Academic Year (e.g., 2024/2025):</label>
+    <input type="text" name="new_academic_year" id="new_academic_year" placeholder="2024/2025">
+
+    <!-- other form inputs -->
+
+    <button type="submit" name="submit">Submit</button>
+</form>
+
                         <?php 
                         // Load materials for selected contribution if editing
                         $existingMaterials = [];
@@ -710,18 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     });
     </script>
-<!-- Buttons for Logout and Back to Dashboard -->
-<div class="buttons">
-    <!-- Back to Dashboard Button -->
-    <a href="dashboard.php">
-        <button type="button">Back to Dashboard</button>
-    </a>
 
-    <!-- Logout Button -->
-    <form action="logout.php" method="POST">
-        <button type="submit">Logout</button>
-    </form>
-</div>
 
 
 </body>

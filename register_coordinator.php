@@ -1,59 +1,32 @@
 <?php
 declare(strict_types=1);
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
-
-// Initialize secure session
-if (session_status() === PHP_SESSION_NONE) {
-    session_set_cookie_params([
-        'lifetime' => 86400,
-        'path' => '/',
-        'domain' => $_SERVER['HTTP_HOST'] ?? 'localhost',
-        'secure' => true,
-        'httponly' => true,
-        'samesite' => 'Lax'
-    ]);
-    session_start();
-}
-
-// Generate CSRF token if not exists
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
-
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/db.php';
-require_once __DIR__ . '/includes/functions.php';
 
-$db = new Database();
-$conn = $db->getConnection();
+$errors = [];
+$success = false;
 
-// Get all faculties for dropdown
+
+
 try {
-    $facultiesStmt = $conn->query("SELECT faculty_id, faculty_name FROM faculties ORDER BY faculty_name");
+    $pdo = Database::getInstance()->getConnection(); // ✅ using your class
+    $facultiesStmt = $pdo->prepare("SELECT id as faculty_id, name as faculty_name FROM faculties ORDER BY name");
+    $facultiesStmt->execute();
     $faculties = $facultiesStmt->fetchAll(PDO::FETCH_ASSOC);
+    usort($faculties, fn($a, $b) => (int)$a['faculty_id'] <=> (int)$b['faculty_id']);
 } catch (PDOException $e) {
     error_log("Database error: " . $e->getMessage());
     $faculties = [];
 }
-
-// Check for errors from previous submission
-$errors = $_SESSION['registration_errors'] ?? [];
-$oldInput = $_SESSION['old_input'] ?? [];
-unset($_SESSION['registration_errors'], $_SESSION['old_input']);
-
-// Check for success message
-$registrationSuccess = $_SESSION['registration_success'] ?? false;
-unset($_SESSION['registration_success']);
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coordinator Registration - University Magazine System</title>
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/styles.css">
+    <link href="<?php echo BASE_URL; ?>assets/css/styles.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         .registration-form-container {
@@ -164,171 +137,118 @@ unset($_SESSION['registration_success']);
             }
         }
     </style>
+
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
-    
+
     <div class="registration-form-container">
-        <div class="form-header">
-            <h1><i class="fas fa-users-cog"></i> Coordinator Registration</h1>
-            <p>Create your account to manage faculty submissions for the university magazine</p>
-        </div>
-        
-        <?php if ($registrationSuccess): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i> Registration successful! Please <a href="login.php">login</a>.
-            </div>
-        <?php endif; ?>
-        
-        <?php if (isset($errors['general'])): ?>
-            <div class="alert alert-danger">
-                <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($errors['general']); ?>
-            </div>
-        <?php endif; ?>
-        
-        <form method="POST" action="<?php echo BASE_URL; ?>process_registration.php" class="registration-form" id="registrationForm">
-            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-            <input type="hidden" name="role" value="marketing_coordinator">
-            
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="first_name" class="form-label">First Name</label>
-                    <input type="text" id="first_name" name="first_name" class="form-control" 
-                           value="<?php echo htmlspecialchars($oldInput['first_name'] ?? ''); ?>" required
-                           pattern="[A-Za-z\s]{2,50}" title="Only letters and spaces (2-50 characters)">
-                    <?php if (isset($errors['first_name'])): ?>
-                        <div class="error-message"><?php echo htmlspecialchars($errors['first_name']); ?></div>
-                    <?php endif; ?>
+        <div class="registration-form">
+            <h1><i class="fas fa-user-graduate"></i> Coordinator Registration</h1>
+
+            <?php if ($success): ?>
+                <div class="alert alert-success">
+                    Registration successful! <a href="login.php">Login here</a>.
                 </div>
-                
-                <div class="form-group">
-                    <label for="last_name" class="form-label">Last Name</label>
-                    <input type="text" id="last_name" name="last_name" class="form-control" 
-                           value="<?php echo htmlspecialchars($oldInput['last_name'] ?? ''); ?>" required
-                           pattern="[A-Za-z\s]{2,50}" title="Only letters and spaces (2-50 characters)">
-                    <?php if (isset($errors['last_name'])): ?>
-                        <div class="error-message"><?php echo htmlspecialchars($errors['last_name']); ?></div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label for="email" class="form-label">University Email</label>
-                <input type="email" id="email" name="email" class="form-control" 
-                       value="<?php echo htmlspecialchars($oldInput['email'] ?? ''); ?>" required
-                       pattern=".+@university\.edu$" title="Must be a valid university email address">
-                <small class="form-text">Must end with @university.edu</small>
-                <?php if (isset($errors['email'])): ?>
-                    <div class="error-message"><?php echo htmlspecialchars($errors['email']); ?></div>
+            <?php else: ?>
+                <?php if (!empty($errors['general'])): ?>
+                    <div class="alert alert-error">
+                        <?php echo htmlspecialchars($errors['general']); ?>
+                    </div>
                 <?php endif; ?>
-            </div>
-            
-            <div class="form-group">
-                <label for="username" class="form-label">Username</label>
-                <input type="text" id="username" name="username" class="form-control" 
-                       value="<?php echo htmlspecialchars($oldInput['username'] ?? ''); ?>" required
-                       pattern="[A-Za-z0-9_]{4,20}" title="4-20 characters (letters, numbers, underscores)">
-                <?php if (isset($errors['username'])): ?>
-                    <div class="error-message"><?php echo htmlspecialchars($errors['username']); ?></div>
-                <?php endif; ?>
-            </div>
-            
-            <div class="form-group">
-                <label for="faculty_id" class="form-label">Faculty</label>
-                <select id="faculty_id" name="faculty_id" class="form-select" required>
-                    <option value="">Select your faculty</option>
+
+                <form method="POST" action="process_registration.php" class="registration-form" id="registrationForm">
+                <input type="hidden" name="role" value="marketing_coordinator">
+
+                    <div class="form-group">
+                        <label for="username"><i class="fas fa-user"></i> Username</label>
+                        <input type="text" id="username" name="username" value="<?php echo htmlspecialchars($_POST['username'] ?? ''); ?>" required>
+                        <?php if (!empty($errors['username'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['username']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email"><i class="fas fa-envelope"></i> Email</label>
+                        <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>" required>
+                        <?php if (!empty($errors['email'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['email']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="first_name"><i class="fas fa-id-card"></i> First Name</label>
+                        <input type="text" id="first_name" name="first_name" value="<?php echo htmlspecialchars($_POST['first_name'] ?? ''); ?>" required>
+                        <?php if (!empty($errors['first_name'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['first_name']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="last_name"><i class="fas fa-id-card"></i> Last Name</label>
+                        <input type="text" id="last_name" name="last_name" value="<?php echo htmlspecialchars($_POST['last_name'] ?? ''); ?>" required>
+                        <?php if (!empty($errors['last_name'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['last_name']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+
+                    <label for="faculty_id" class="form-label">Select Faculty</label>
+                    <?php if (!empty($faculties)): ?>
+                    <select name="faculty_id" id="faculty_id" class="form-select" required>
+                   <option value="">-- Select Faculty --</option>
                     <?php foreach ($faculties as $faculty): ?>
-                        <option value="<?php echo $faculty['faculty_id']; ?>" 
-                            <?php echo ($oldInput['faculty_id'] ?? '') == $faculty['faculty_id'] ? 'selected' : ''; ?>>
-                            <?php echo htmlspecialchars($faculty['faculty_name']); ?>
-                        </option>
-                    <?php endforeach; ?>
+                    <option value="<?= $faculty['faculty_id'] ?>">
+                    <?= htmlspecialchars($faculty['faculty_name']) ?>
+                     </option>
+                  <?php endforeach; ?>
+                 </select>
+                 <?php else: ?>
+                  <select name="id" id="id" class="form-select" disabled>
+                <option value="">No faculties available</option>
                 </select>
-                <?php if (isset($errors['faculty_id'])): ?>
-                    <div class="error-message"><?php echo htmlspecialchars($errors['faculty_id']); ?></div>
                 <?php endif; ?>
-            </div>
-            
-            <div class="form-group password-group">
-                <label for="password" class="form-label">Password</label>
-                <div class="password-input-wrapper">
-                    <input type="password" id="password" name="password" class="form-control" required
-                           minlength="8" pattern="(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}"
-                           title="Must contain at least one number, one uppercase and lowercase letter, and at least 8 characters">
-                    <button type="button" class="toggle-password" aria-label="Show password">
-                        <i class="fas fa-eye"></i>
-                    </button>
                 </div>
-                <div class="password-strength">
-                    <div class="password-strength-bar" id="passwordStrengthBar"></div>
-                </div>
-                <small class="form-text">Minimum 8 characters with at least one uppercase, one lowercase, and one number</small>
-                <?php if (isset($errors['password'])): ?>
-                    <div class="error-message"><?php echo htmlspecialchars($errors['password']); ?></div>
-                <?php endif; ?>
-            </div>
-            
-            <div class="form-group password-group">
-                <label for="confirm_password" class="form-label">Confirm Password</label>
-                <div class="password-input-wrapper">
-                    <input type="password" id="confirm_password" name="confirm_password" class="form-control" required>
-                    <button type="button" class="toggle-password" aria-label="Show password">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </div>
-                <?php if (isset($errors['confirm_password'])): ?>
-                    <div class="error-message"><?php echo htmlspecialchars($errors['confirm_password']); ?></div>
-                <?php endif; ?>
-            </div>
-            
-            <div class="form-group">
-                <button type="submit" class="btn-submit">Register</button>
-            </div>
-        </form>
+ 
+                    <div class="form-group">
+                        <label for="password"><i class="fas fa-lock"></i> Password</label>
+                        <input type="password" id="password" name="password" required>
+                        <?php if (!empty($errors['password'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['password']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirm_password"><i class="fas fa-lock"></i> Confirm Password</label>
+                        <input type="password" id="confirm_password" name="confirm_password" required>
+                        <?php if (!empty($errors['confirm_password'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['confirm_password']); ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="terms_accepted" name="terms_accepted" <?php echo isset($_POST['terms_accepted']) ? 'checked' : ''; ?>>
+                        <label for="terms_accepted">I agree to the <a href="terms.php">terms and conditions</a></label>
+                        <?php if (!empty($errors['terms_accepted'])): ?>
+                            <div class="error"><?php echo htmlspecialchars($errors['terms_accepted']); ?></div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" class="btn-submit">
+                         <i class="fas fa-paper-plane"></i> Submit Request
+                         </button>
+                    </div>
+
+                   
+            <div style="text-align: center; margin-top: 1rem;">
+            <p>Already have an account? <a href="login.php?role=student">Login here</a></p>
+            <p>Not a Student? <a href="register.php">Select your role</a></p>
+             </div>
+    </form>
+     <?php endif; ?>
     </div>
-    
+    </div>
+
     <?php include 'includes/footer.php'; ?>
-    
-    <script>
-        // Password visibility toggle
-        document.querySelectorAll('.toggle-password').forEach((button) => {
-            button.addEventListener('click', () => {
-                const passwordField = button.previousElementSibling;
-                if (passwordField.type === "password") {
-                    passwordField.type = "text";
-                    button.innerHTML = '<i class="fas fa-eye-slash"></i>';
-                } else {
-                    passwordField.type = "password";
-                    button.innerHTML = '<i class="fas fa-eye"></i>';
-                }
-            });
-        });
-        
-        // Password strength checker
-        const passwordInput = document.getElementById('password');
-        const passwordStrengthBar = document.getElementById('passwordStrengthBar');
-        passwordInput.addEventListener('input', () => {
-            const strength = getPasswordStrength(passwordInput.value);
-            passwordStrengthBar.style.width = strength + '%';
-            passwordStrengthBar.style.backgroundColor = getStrengthColor(strength);
-        });
-
-        function getPasswordStrength(password) {
-            let strength = 0;
-            if (password.length >= 8) strength += 20;
-            if (/[A-Z]/.test(password)) strength += 20;
-            if (/[a-z]/.test(password)) strength += 20;
-            if (/\d/.test(password)) strength += 20;
-            if (/[^A-Za-z0-9]/.test(password)) strength += 20;
-            return strength;
-        }
-
-        function getStrengthColor(strength) {
-            if (strength < 40) return '#e74c3c';
-            if (strength < 60) return '#f39c12';
-            if (strength < 80) return '#f1c40f';
-            return '#2ecc71';
-        }
-    </script>
 </body>
 </html>

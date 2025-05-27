@@ -1,0 +1,7 @@
+{
+    "name": "freshc/school-project-ms",
+    "type": "n",
+    "require": {
+        "phpmailer/phpmailer": "*"
+    }
+}

@@ -1,10 +1,11 @@
 <?php
+session_start();  // Always start the session at the top of the page
 require_once '../includes/auth.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
 $auth = new Auth();
-$auth->redirectIfNotAuthorized(['manager']);
+$auth->redirectIfNotAuthorized(['marketing_manager']);
 
 $db = new Database();
 $conn = $db->getConnection();
@@ -21,7 +22,7 @@ $publishedStmt = $conn->query("
     FROM contributions c
     JOIN faculties f ON c.faculty_id = f.id
     JOIN users u ON c.student_id = u.id
-    WHERE c.status = 'published'
+    WHERE c.status = 'approved'
     ORDER BY c.submission_date DESC
 ");
 $publishedContributions = $publishedStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -31,7 +32,7 @@ $statsStmt = $conn->query("
     SELECT 
         f.name as faculty_name,
         COUNT(c.id) as total_contributions,
-        SUM(CASE WHEN c.status = 'published' THEN 1 ELSE 0 END) as published_count
+        SUM(CASE WHEN c.status = 'approved' THEN 1 ELSE 0 END) as published_count
     FROM faculties f
     LEFT JOIN contributions c ON f.id = c.faculty_id
     GROUP BY f.id
@@ -44,8 +45,8 @@ $facultyStats = $statsStmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manager Dashboard - University Magazine</title>
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/styles.css">
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/manager.css">
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    <link rel="stylesheet" href="../assets/css/manager.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         .dashboard-container {

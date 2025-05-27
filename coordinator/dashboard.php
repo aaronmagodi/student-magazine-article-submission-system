@@ -1,13 +1,16 @@
 <?php
+session_start();
 require_once '../includes/auth.php';
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
 $auth = new Auth();
-$auth->redirectIfNotAuthorized(['coordinator']);
+$auth->redirectIfNotAuthorized(['marketing_coordinator']);
 
 $db = new Database();
 $conn = $db->getConnection();
+
+$facultyId = $_SESSION['faculty_id'];
 
 // Get coordinator information
 $coordinatorStmt = $conn->prepare("
@@ -20,7 +23,12 @@ $coordinatorStmt->bindParam(':user_id', $_SESSION['user_id']);
 $coordinatorStmt->execute();
 $coordinator = $coordinatorStmt->fetch(PDO::FETCH_ASSOC);
 
-// Get pending contributions for coordinator's faculty
+// --- Pagination Setup ---
+$limit = 5;
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($page - 1) * $limit;
+
+// Get pending contributions for coordinator's faculty with pagination
 $pendingStmt = $conn->prepare("
     SELECT c.*, u.username as student_name, 
            COUNT(cm.id) as comment_count,
@@ -31,12 +39,22 @@ $pendingStmt = $conn->prepare("
     WHERE c.faculty_id = :faculty_id AND c.status = 'submitted'
     GROUP BY c.id
     ORDER BY c.submission_date DESC
+    LIMIT :limit OFFSET :offset
 ");
-$pendingStmt->bindParam(':faculty_id', $_SESSION['faculty_id']);
+$pendingStmt->bindParam(':faculty_id', $facultyId, PDO::PARAM_INT);
+$pendingStmt->bindParam(':limit', $limit, PDO::PARAM_INT);
+$pendingStmt->bindParam(':offset', $offset, PDO::PARAM_INT);
 $pendingStmt->execute();
 $pendingContributions = $pendingStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get statistics
+// Get total count for pagination
+$totalStmt = $conn->prepare("SELECT COUNT(*) FROM contributions WHERE faculty_id = :faculty_id AND status = 'submitted'");
+$totalStmt->bindParam(':faculty_id', $facultyId, PDO::PARAM_INT);
+$totalStmt->execute();
+$totalContributions = $totalStmt->fetchColumn();
+$totalPages = ceil($totalContributions / $limit);
+
+// --- Stats ---
 $statsStmt = $conn->prepare("
     SELECT 
         COUNT(*) as total_contributions,
@@ -46,76 +64,43 @@ $statsStmt = $conn->prepare("
     FROM contributions
     WHERE faculty_id = :faculty_id
 ");
-$statsStmt->bindParam(':faculty_id', $_SESSION['faculty_id']);
+$statsStmt->bindParam(':faculty_id', $facultyId, PDO::PARAM_INT);
 $statsStmt->execute();
 $stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coordinator Dashboard - University Magazine</title>
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/styles.css">
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/coordinator.css">
+    <link rel="stylesheet" href="../assets/css/coordinator.css">
+    <link rel="stylesheet" href="../assets/css/styles.css">
+    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+   
     <style>
-        .dashboard-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .welcome-message {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-        }
-        .stat-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .stat-card {
-            background: white;
-            padding: 15px;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: #3498db;
-        }
-        .contribution-card {
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 15px;
-            margin-bottom: 20px;
-            background: white;
-        }
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-        }
         .btn {
-            padding: 8px 12px;
-            border-radius: 4px;
-            text-decoration: none;
-            display: inline-block;
-            margin-right: 5px;
-            font-size: 0.9em;
-        }
-        .btn-primary {
-            background: #3498db;
-            color: white;
-        }
+    padding: 8px 12px;
+    border-radius: 4px;
+    text-decoration: none;
+    display: inline-block;
+    margin-right: 5px;
+    font-size: 0.9em;
+}
+
+.review-btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    text-decoration: none;
+}
     </style>
+
 </head>
 <body>
     <?php include '../includes/header.php'; ?>
@@ -131,58 +116,56 @@ $stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
         
         <h2>Faculty Statistics</h2>
         <div class="stat-cards">
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['total_contributions']; ?></div>
-                <div>Total Contributions</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['approved_count']; ?></div>
-                <div>Approved</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['rejected_count']; ?></div>
-                <div>Rejected</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['pending_count']; ?></div>
-                <div>Pending Review</div>
-            </div>
+        <div class="stat-card">
+            <i class="fas fa-newspaper fa-2x"></i>
+            <div><strong><?= $stats['total_contributions'] ?></strong></div>
+            <small>Total Contributions</small>
         </div>
+        <div class="stat-card">
+            <i class="fas fa-check-circle fa-2x" style="color:green;"></i>
+            <div><strong><?= $stats['approved_count'] ?></strong></div>
+            <small>Approved</small>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-times-circle fa-2x" style="color:red;"></i>
+            <div><strong><?= $stats['rejected_count'] ?></strong></div>
+            <small>Rejected</small>
+        </div>
+        <div class="stat-card">
+            <i class="fas fa-hourglass-half fa-2x" style="color:orange;"></i>
+            <div><strong><?= $stats['pending_count'] ?></strong></div>
+            <small>Pending</small>
+        </div>
+
+        
+    </div>
         
         <h2>Pending Contributions</h2>
         
-        <?php if (empty($pendingContributions)): ?>
-            <div class="alert alert-info">
-                <i class="fas fa-info-circle"></i> No pending contributions for review.
+        <?php if (count($pendingContributions) > 0): ?>
+        <?php foreach ($pendingContributions as $contribution): ?>
+            <div class="contribution-card">
+                <h3><?= htmlspecialchars($contribution['title']) ?></h3>
+                <p><strong>Submitted by:</strong> <?= htmlspecialchars($contribution['student_name']) ?></p>
+                <p><strong>Days Pending:</strong> <?= $contribution['days_pending'] ?> day(s)</p>
+                <p><strong>Comments:</strong> <?= $contribution['comment_count'] ?></p>
+                <a href="review_contribution.php?id=<?= $contribution['id'] ?>"></a>
+                <a href="review_contribution.php?id=<?= $contribution['id'] ?>" class="review-btn">Review</a>
             </div>
-        <?php else: ?>
-            <?php foreach ($pendingContributions as $contribution): ?>
-                <div class="contribution-card">
-                    <h3><?php echo htmlspecialchars($contribution['title']); ?></h3>
-                    <p>By <?php echo htmlspecialchars($contribution['student_name']); ?></p>
-                    <p><?php echo nl2br(htmlspecialchars($contribution['abstract'])); ?></p>
-                    
-                    <div class="contribution-meta">
-                        <span><i class="fas fa-calendar"></i> Submitted on <?php echo date('F j, Y', strtotime($contribution['submission_date'])); ?></span>
-                        <span><i class="fas fa-clock"></i> Pending for <?php echo $contribution['days_pending']; ?> days</span>
-                        <span><i class="fas fa-comment"></i> <?php echo $contribution['comment_count']; ?> comments</span>
-                    </div>
-                    
-                    <?php if ($contribution['days_pending'] > 14): ?>
-                        <div class="alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i> This contribution is overdue for review!
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="contribution-actions">
-                        <a href="review_contribution.php?id=<?php echo $contribution['id']; ?>" class="btn btn-primary">
-                            <i class="fas fa-edit"></i> Review
-                        </a>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        <?php endif; ?>
+        <?php endforeach; ?>
+    <?php else: ?>
+        <p>No pending contributions at the moment.</p>
+    <?php endif; ?>
+
+    <!-- Pagination -->
+    <div class="pagination">
+        <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+            <a href="?page=<?= $i ?>" class="<?= ($page == $i) ? 'active' : '' ?>">
+                <?= $i ?>
+            </a>
+        <?php endfor; ?>
     </div>
+
     
     <?php include '../includes/footer.php'; ?>
 </body>

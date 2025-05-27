@@ -28,18 +28,20 @@ if (isset($_SESSION['user_id'])) {
     exit();
 }
 
-require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/functions.php';
 
 // Get allowed registration roles (exclude admin and guest)
-$allowedRoles = ['student', 'coordinator', 'manager'];
+$allowedRoles = ['student', 'marketing_coordinator', 'marketing_manager'];
 $currentRole = $_GET['role'] ?? null;
 
 // If specific role is requested and valid, redirect to specific form
 if ($currentRole && in_array($currentRole, $allowedRoles)) {
-    header("Location: register_{$currentRole}.php");
-    exit();
+    $rolePage = 'register_' . str_replace('marketing_', '', $currentRole) . '.php';
+    if (file_exists($rolePage)) {
+        header("Location: / $rolePage");
+        exit();
+    }
 }
 ?>
 <!DOCTYPE html>

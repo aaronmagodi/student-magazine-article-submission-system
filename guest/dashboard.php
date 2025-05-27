@@ -1,167 +1,125 @@
 <?php
+// Enable error reporting
+@ini_set('display_errors', 1);
+@ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Include your database and function files
 require_once '../includes/db.php';
 require_once '../includes/functions.php';
 
-// Initialize guest session if not already set
+// Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
-    $_SESSION['role'] = 'guest';
+    $_SESSION['role'] = 'guest'; // Guest role for visitors
 }
 
+// Connect to database
 $db = new Database();
 $conn = $db->getConnection();
 
-// Get published contributions
-$contributionsStmt = $conn->query("
-    SELECT c.id, c.title, c.abstract, c.submission_date, 
-           f.name as faculty_name, u.username as student_name
-    FROM contributions c
-    JOIN faculties f ON c.faculty_id = f.id
-    JOIN users u ON c.student_id = u.id
-    WHERE c.status = 'published'
-    ORDER BY c.submission_date DESC
-");
-$contributions = $contributionsStmt->fetchAll(PDO::FETCH_ASSOC);
+try {
+    // Fetch selected contributions
+    $stmt = $conn->prepare("
+        SELECT c.id, c.title, c.abstract, c.submission_date,
+               f.name AS faculty_name,
+               u.username AS student_name
+        FROM contributions c
+        JOIN faculties f ON c.faculty_id = f.id
+        JOIN users u ON c.student_id = u.id
+        WHERE c.status = 'selected'
+        ORDER BY c.submission_date DESC
+    ");
+    $stmt->execute();
+    $contributions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get statistics
-$statsStmt = $conn->query("
-    SELECT 
-        COUNT(*) as total_published,
-        COUNT(DISTINCT c.student_id) as unique_contributors,
-        COUNT(DISTINCT c.faculty_id) as faculties_represented
-    FROM contributions c
-    WHERE c.status = 'published'
-");
-$stats = $statsStmt->fetch(PDO::FETCH_ASSOC);
+    // Fetch statistics
+    $stats = $conn->query("
+        SELECT 
+            COUNT(*) AS total_selected,
+            COUNT(DISTINCT c.student_id) AS unique_contributors,
+            COUNT(DISTINCT c.faculty_id) AS faculties_represented
+        FROM contributions c
+        WHERE c.status = 'selected'
+    ")->fetch(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    die("Database Error: " . $e->getMessage());
+}
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guest View - University Magazine</title>
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/styles.css">
-    <link rel="stylesheet" href="<?php echo BASE_URL; ?>assets/css/guest.css">
+    <title>Guest Dashboard - University Magazine</title>
+    <link rel="stylesheet" href="../assets/css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        .guest-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        .stat-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            text-align: center;
-        }
-
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #3498db;
-        }
-
-        .contribution-card {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .faculty-badge {
-            display: inline-block;
-            padding: 3px 8px;
-            background: #e7f5ff;
-            color: #1864ab;
-            border-radius: 4px;
-            font-size: 0.8rem;
-        }
-
-        .btn {
-            padding: 8px 12px;
-            border-radius: 4px;
-            text-decoration: none;
-            display: inline-block;
-            margin-right: 5px;
-            font-size: 0.9em;
-        }
-
-        .btn-primary {
-            background: #3498db;
-            color: white;
-        }
-
-        @media (max-width: 768px) {
-            .stat-cards {
-                grid-template-columns: 1fr;
-            }
-        }
+        body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 0; }
+        .container { max-width: 1200px; margin: auto; padding: 20px; }
+        h1 { color: #333; }
+        .stat-boxes { display: flex; gap: 20px; margin-bottom: 30px; flex-wrap: wrap; }
+        .stat { background: #fff; border-radius: 10px; padding: 20px; flex: 1; box-shadow: 0 0 10px rgba(0,0,0,0.1); min-width: 200px; }
+        .stat h2 { margin: 0 0 10px; font-size: 18px; color: #777; }
+        .stat p { font-size: 24px; font-weight: bold; color: #3498db; }
+        .contribution { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 0 8px rgba(0,0,0,0.05); }
+        .contribution h3 { margin: 0; }
+        .contribution .meta { color: #555; font-size: 14px; margin-top: 5px; }
+        .contribution .abstract { margin-top: 10px; }
+        .back-link {
+                        display: block;
+                        margin-top: 15px;
+                        text-align: center;
+                        font-size: 14px;
+                        color: #666;
+                        text-decoration: none;
+                    }
     </style>
 </head>
-
 <body>
-    <?php include '../includes/header.php'; ?>
 
-    <div class="guest-container">
-        <h1><i class="fas fa-eye"></i> Magazine Contributions</h1>
-        <p>Viewing selected published contributions from all faculties</p>
+<?php //include 'header.php'; ?>
+<div class="container">
+<a class="back-link" href="../index.php">← Back to Dashboard</a>
+    <h1><i class="fas fa-eye"></i> Selected Contributions</h1>
+    <p>Explore student articles selected for publication across all faculties.</p>
 
-        <div class="stat-cards">
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['total_published']; ?></div>
-                <div class="stat-label">Published Articles</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['unique_contributors']; ?></div>
-                <div class="stat-label">Student Contributors</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?php echo $stats['faculties_represented']; ?></div>
-                <div class="stat-label">Faculties Represented</div>
-            </div>
+    <!-- Stats -->
+    <div class="stat-boxes">
+        <div class="stat">
+            <h2>Total Selected</h2>
+            <p><?php echo $stats['total_selected']; ?></p>
         </div>
-
-        <div class="contributions-list">
-            <?php if (empty($contributions)): ?>
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i> No published contributions yet.
-                </div>
-            <?php else: ?>
-                <?php foreach ($contributions as $contribution): ?>
-                    <div class="contribution-card">
-                        <h2><?php echo htmlspecialchars($contribution['title']); ?></h2>
-                        <div class="contribution-meta">
-                            <span class="faculty-badge">
-                                <?php echo htmlspecialchars($contribution['faculty_name']); ?>
-                            </span>
-                            <span>By <?php echo htmlspecialchars($contribution['student_name']); ?></span>
-                            <span>Published on <?php echo date('F j, Y', strtotime($contribution['submission_date'])); ?></span>
-                        </div>
-                        <div class="contribution-abstract">
-                            <p><?php echo nl2br(htmlspecialchars($contribution['abstract'])); ?></p>
-                        </div>
-                        <a href="view_contribution.php?id=<?php echo $contribution['id']; ?>" class="btn btn-primary">
-                            <i class="fas fa-book-open"></i> Read Full Article
-                        </a>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
+        <div class="stat">
+            <h2>Unique Contributors</h2>
+            <p><?php echo $stats['unique_contributors']; ?></p>
+        </div>
+        <div class="stat">
+            <h2>Faculties Represented</h2>
+            <p><?php echo $stats['faculties_represented']; ?></p>
         </div>
     </div>
 
-    <?php include '../includes/footer.php'; ?>
-</body>
+    <!-- Contributions -->
+    <?php if (!empty($contributions)) : ?>
+        <?php foreach ($contributions as $item) : ?>
+            <div class="contribution">
+                <h3><?php echo htmlspecialchars($item['title']); ?></h3>
+                <div class="meta">
+                    Submitted by <strong><?php echo htmlspecialchars($item['student_name']); ?></strong>
+                    from <strong><?php echo htmlspecialchars($item['faculty_name']); ?></strong>
+                    on <?php echo date('F j, Y', strtotime($item['submission_date'])); ?>
+                </div>
+                <?php if ($item['abstract']) : ?>
+                    <div class="abstract"><?php echo nl2br(htmlspecialchars($item['abstract'])); ?></div>
+                <?php endif; ?>
+            </div>
+        <?php endforeach; ?>
+    <?php else : ?>
+        <p>No selected contributions yet.</p>
+    <?php endif; ?>
+</div>
 
+</body>
 </html>

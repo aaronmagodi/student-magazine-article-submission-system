@@ -10,7 +10,7 @@ if (session_status() === PHP_SESSION_NONE) {
         'lifetime' => 86400,
         'path' => '/',
         'domain' => $_SERVER['HTTP_HOST'] ?? 'localhost',
-        'secure' => true,
+        'secure' => isset($_SERVER['HTTPS']),
         'httponly' => true,
         'samesite' => 'Lax'
     ]);
@@ -23,96 +23,66 @@ require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
 
-// Initialize variables
 $auth = new Auth();
 $error = '';
-$role = $_GET['role'] ?? '';
 
-// Allowed user roles
-$allowedRoles = ['student', 'coordinator', 'manager', 'admin'];
-
-// Display-friendly role names
-$roleNames = [
-    'student' => 'Student',
-    'coordinator' => 'Marketing Coordinator',
-    'manager' => 'Marketing Manager',
-    'admin' => 'System Administrator'
-];
-
-// Redirect if an invalid role is provided
-if (!empty($role) && !in_array($role, $allowedRoles, true)) {
-    header('Location: login.php');
-    exit();
-}
-
-// Generate CSRF token if needed
+// Generate CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Handle login submission
+// Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Validate CSRF token
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         $error = 'Invalid security token. Please try again.';
     } else {
         $email = filter_input(INPUT_POST, 'email', FILTER_SANITIZE_EMAIL);
         $password = $_POST['password'] ?? '';
-        $role = $_POST['role'] ?? '';
-        $remember = isset($_POST['remember']); // For 'Remember Me' functionality
+        $remember = isset($_POST['remember']);
 
-        // Validate inputs
         if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $error = 'Please enter a valid email address.';
         } elseif (empty($password)) {
             $error = 'Password is required.';
-        } elseif (!in_array($role, $allowedRoles, true)) {
-            $error = 'Invalid user role specified.';
         } else {
-            // Attempt authentication
-            $loginResult = $auth->login($email, $password, $role); // Pass role here, not remember
+            $loginResult = $auth->login($email, $password);
 
             if ($loginResult === true) {
                 $userRole = $auth->getUserRole();
 
-                if ($userRole !== $role) {
-                    $error = 'You do not have permission to access this role.';
-                    $auth->logout();
+                session_regenerate_id(true);
+                $_SESSION['last_login'] = time();
+                $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+
+                $redirectMap = [
+                    'student' => 'student/dashboard.php',
+                    'coordinator' => 'coordinator/dashboard.php',
+                    'manager' => 'manager/dashboard.php',
+                    'admin' => 'admin/dashboard.php'
+                ];
+
+                if ($remember) {
+                    setcookie('user_email', $email, time() + (86400 * 30), "/");
                 } else {
-                    session_regenerate_id(true);
-                    $_SESSION['last_login'] = time();
-                    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+                    setcookie('user_email', '', time() - 3600, "/");
+                }
 
-                    // Redirect map based on user role
-                    $redirectMap = [
-                        'student' => 'student/dashboard.php',
-                        'coordinator' => 'coordinator/dashboard.php',
-                        'manager' => 'manager/dashboard.php',
-                        'admin' => 'admin/dashboard.php'
-                    ];
-
-                    // Handle "Remember Me" logic if checked
-                    if ($remember) {
-                        setcookie('user_email', $email, time() + (86400 * 30), "/"); // 30 days
-                        setcookie('user_role', $role, time() + (86400 * 30), "/");
-                    } else {
-                        setcookie('user_email', '', time() - 3600, "/");
-                        setcookie('user_role', '', time() - 3600, "/");
-                    }
-
+                if (isset($redirectMap[$userRole])) {
                     header('Location: ' . BASE_URL . $redirectMap[$userRole]);
                     exit;
+                } else {
+                    $error = 'Unknown role. Access denied.';
                 }
             } else {
                 $error = $loginResult === false ? 'Invalid email or password.' : $loginResult;
-                error_log("Login failed for email: $email, role: $role");
+                error_log("Login failed for email: $email");
             }
         }
     }
 }
 
 // Set page title
-$pageTitle = $roleNames[$role] ?? 'Login';
+$pageTitle = 'Login';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -136,9 +106,9 @@ $pageTitle = $roleNames[$role] ?? 'Login';
         }
         .login-container {
             background-color: #fff;
-            padding: 30px;
+            padding: 2rem;
             border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
             width: 100%;
             max-width: 400px;
         }
@@ -148,6 +118,10 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             font-size: 24px;
             color: #333;
         }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
         .alert-error {
             background-color: #f8d7da;
             color: #721c24;
@@ -156,13 +130,16 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             border-radius: 5px;
             font-size: 14px;
         }
+
         .form-group {
             margin-bottom: 15px;
         }
-        .form-label {
-            font-size: 14px;
-            color: #333;
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
         }
+
         .form-control {
             width: 100%;
             padding: 10px;
@@ -171,6 +148,7 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             border-radius: 4px;
             font-size: 14px;
         }
+
         .password-wrapper {
             position: relative;
         }
@@ -193,6 +171,23 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             cursor: pointer;
             font-size: 16px;
         }
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .btn {
+            background-color: #0056b3;
+            color: white;
+            padding: 0.75rem;
+            width: 100%;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
         .btn-login:hover {
             background-color: #45a049;
         }
@@ -200,6 +195,14 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             text-align: center;
             margin-top: 20px;
         }
+        .btn:hover {
+            background-color: #004494;
+        }
+        .error {
+            color: red;
+            margin-bottom: 1rem;
+        }
+
         .login-links a {
             font-size: 14px;
             color: #007bff;
@@ -228,36 +231,23 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             font-size: 14px;
             color: #333;
         }
+
+
     </style>
 </head>
 <body>
-<?php include 'includes/header.php'; ?>
-
-<main class="main-content">
+<div class="main-content">
     <div class="login-container">
-        <?php if (isset($roleNames[$role])): ?>
-            <div class="role-badge">
-                <i class="fas fa-user-tag"></i> <?php echo htmlspecialchars($roleNames[$role]); ?>
-            </div>
+    <h1 class="login-title">University Magazine System</h1>
+        <?php if (!empty($error)) : ?>
+            <div class="error"><?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
-
-        <h1 class="login-title">University Magazine System</h1>
-
-        <?php if ($error): ?>
-            <div class="alert alert-error">
-                <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error); ?>
-            </div>
-        <?php endif; ?>
-
-        <form method="POST" class="login-form" novalidate>
-            <input type="hidden" name="role" value="<?php echo htmlspecialchars($role); ?>">
+        <form method="POST" action="" class="login-form" novalidate>
             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-
+            
             <div class="form-group">
-                <label for="email" class="form-label">Email Address</label>
-                <input type="email" id="email" name="email" class="form-control"
-                       value="<?php echo htmlspecialchars($_POST['email'] ?? ''); ?>"
-                       placeholder="your.email@university.edu" required autocomplete="username">
+                <label for="email" class="form-label">Email address</label>
+                <input type="email" name="email" id="email" clas="form-control" required value="<?php echo htmlspecialchars($_COOKIE['user_email'] ?? ''); ?>">
             </div>
 
             <div class="form-group">
@@ -271,9 +261,9 @@ $pageTitle = $roleNames[$role] ?? 'Login';
                 </div>
                 <div style="text-align: right; margin-top: 0.5rem;">
                     <a href="forgot-password.php" style="font-size: 0.85rem;">Forgot password?</a>
+                    
                 </div>
             </div>
-
             <div class="form-group remember-me">
                 <input type="checkbox" id="remember" name="remember">
                 <label for="remember">Remember me</label>
@@ -285,7 +275,7 @@ $pageTitle = $roleNames[$role] ?? 'Login';
         </form>
 
         <div class="login-links">
-            <a href="register.php?role=<?php echo htmlspecialchars($role); ?>">
+            <a href="register.php?role">
                 <i class="fas fa-user-plus"></i> Create an account
             </a>
             <a href="index.php">
@@ -293,10 +283,11 @@ $pageTitle = $roleNames[$role] ?? 'Login';
             </a>
         </div>
     </div>
-</main>
+     
+    
 
-<?php include 'includes/footer.php'; ?>
-
+</body>
+</html>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         const passwordToggle = document.querySelector('.password-toggle');
@@ -324,5 +315,3 @@ $pageTitle = $roleNames[$role] ?? 'Login';
         });
     });
 </script>
-</body>
-</html>
